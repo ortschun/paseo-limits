@@ -27,8 +27,9 @@ paseo plugin install "$PWD"
 ## How it works
 
 - Usage comes from Paseo's own provider usage service (`paseo.providers.listUsage()`), the same source the context-window tooltip uses. No credentials or vendor calls in the plugin.
+- Custom providers that `extends` a builtin (for example `claude-lead` extending `claude`) show the builtin's limits: the plugin reads `providers.<id>.extends` from daemon config (`paseo.config.get()`) and follows it to the base provider.
 - Polls every 2 minutes, plus a throttled refresh whenever the popover opens.
-- Client-only: no daemon subprocess, no RPCs, no filesystem or network access.
+- Client-only: no daemon subprocess, no plugin RPCs, no filesystem or network access.
 - Works on desktop and mobile. Colors follow the active theme.
 
 ## Limitations

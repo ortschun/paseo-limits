@@ -9,6 +9,8 @@ export type UsageTone = "ok" | "warning" | "danger";
 
 export interface UsageState {
   providers: ProviderUsage[];
+  /** Custom provider id → the builtin it `extends` (daemon config); usage is tracked per builtin. */
+  bases: Record<string, string>;
   fetchedAt: string | null;
   error: string | null;
   loading: boolean;
@@ -22,7 +24,7 @@ const MIN_REFETCH_MS = 15 * 1000;
  * timer; the client entry stops it on cleanup.
  */
 export function createUsageStore(paseo: PaseoApi) {
-  let state: UsageState = { providers: [], fetchedAt: null, error: null, loading: false };
+  let state: UsageState = { providers: [], bases: {}, fetchedAt: null, error: null, loading: false };
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setInterval> | null = null;
   let inflight: Promise<void> | null = null;
@@ -39,11 +41,10 @@ export function createUsageStore(paseo: PaseoApi) {
     if (inflight) return inflight;
     if (!force && Date.now() - lastFetch < MIN_REFETCH_MS) return Promise.resolve();
     set({ loading: true });
-    inflight = paseo.providers
-      .listUsage()
-      .then((result) => {
+    inflight = Promise.all([paseo.providers.listUsage(), readBases(paseo)])
+      .then(([result, bases]) => {
         if (stopped) return;
-        set({ providers: result.providers, fetchedAt: result.fetchedAt, error: null, loading: false });
+        set({ providers: result.providers, bases, fetchedAt: result.fetchedAt, error: null, loading: false });
       })
       .catch((error: unknown) => {
         if (stopped) return;
@@ -85,13 +86,35 @@ export function createUsageStore(paseo: PaseoApi) {
 
 export type UsageStore = ReturnType<typeof createUsageStore>;
 
+/** `extends` of every custom provider in daemon config. A failed read leaves the map empty. */
+async function readBases(paseo: PaseoApi): Promise<Record<string, string>> {
+  try {
+    const { config } = await paseo.config.get();
+    const bases: Record<string, string> = {};
+    for (const [id, entry] of Object.entries(config.providers ?? {})) {
+      const base = (entry as { extends?: unknown }).extends;
+      if (typeof base === "string" && base) bases[id.toLowerCase()] = base.toLowerCase();
+    }
+    return bases;
+  } catch {
+    return {};
+  }
+}
+
 /** `claude/opus` and `claude` both map to the usage entry `claude`. */
 export function providerKey(agentProvider: string): string {
   return agentProvider.split("/")[0]?.toLowerCase() ?? agentProvider;
 }
 
+/** Follows `extends` to the builtin whose usage the daemon tracks: `claude-lead` → `claude`. */
+export function baseProviderKey(state: UsageState, agentProvider: string): string {
+  let key = providerKey(agentProvider);
+  for (let hop = 0; hop < 8 && state.bases[key]; hop++) key = state.bases[key];
+  return key;
+}
+
 export function findProviderUsage(state: UsageState, agentProvider: string): ProviderUsage | null {
-  const key = providerKey(agentProvider);
+  const key = baseProviderKey(state, agentProvider);
   return state.providers.find((entry) => entry.providerId.toLowerCase() === key) ?? null;
 }
 

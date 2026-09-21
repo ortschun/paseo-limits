@@ -12,7 +12,7 @@ import {
   pillLabel,
   pillTone,
   pillWindows,
-  providerKey,
+  baseProviderKey,
   toneFor,
   usedPercent,
   type UsageStore,
@@ -39,9 +39,10 @@ function createLimitsIcon(store: UsageStore, agentProvider: () => string | null)
         : tone === "warning"
           ? theme.colors.statusWarning
           : theme.colors.statusSuccess;
-    const logo = provider ? PROVIDER_LOGOS[providerKey(provider)] : undefined;
+    const key = provider ? baseProviderKey(store.getState(), provider) : "";
+    const logo = key ? PROVIDER_LOGOS[key] : undefined;
     if (logo) {
-      const brand = BRAND_COLORS[providerKey(provider ?? "")] ?? theme.colors.foreground;
+      const brand = BRAND_COLORS[key] ?? theme.colors.foreground;
       const tone = wins.length > 0 ? pillTone(usage) : "ok";
       const dot = Math.max(5, Math.round(size * 0.4));
       return (
