@@ -145,11 +145,13 @@ export function worstTone(tones: UsageTone[]): UsageTone {
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
 /**
- * "5h" or "wk". Claude names its windows explicitly. Codex calls its primary window "Session"
- * and Paseo drops the window length, so an ambiguous window is classified by how far away its
- * reset is: a 5-hour window can never reset more than 5 hours out.
+ * "5h" or "wk". Paseo 0.15+ sends `shortLabel`; older daemons don't, so fall back to the id and
+ * label. Codex calls its primary window "Session" and old daemons drop the window length, so an
+ * ambiguous window is classified by how far away its reset is: a 5-hour window can never reset
+ * more than 5 hours out.
  */
 export function shortWindowLabel(win: UsageWindow, now = Date.now()): string {
+  if (win.shortLabel) return win.shortLabel;
   const probe = `${win.id} ${win.label}`.toLowerCase();
   if (/five_hour|5h|5-hour|five hour/.test(probe)) return "5h";
   if (/week|seven|7d|7-day/.test(probe)) return "wk";
@@ -165,12 +167,19 @@ export function shortWindowLabel(win: UsageWindow, now = Date.now()): string {
 /** Popover row label: replaces Paseo's generic "Session" with what the window actually is. */
 export function displayWindowLabel(win: UsageWindow): string {
   if (!/session|primary|secondary/i.test(`${win.id} ${win.label}`)) return win.label;
+  if (win.shortLabel === "5h") return "5-hour";
+  if (win.shortLabel === "wk") return "Weekly";
   return shortWindowLabel(win) === "wk" ? "Weekly" : "5-hour";
 }
 
-/** The two windows the pill shows: the session win first, then the weekly one. */
+/**
+ * The two windows the pill shows: the session window first, then the weekly one. Windows Paseo
+ * flags as `summary` win over per-model ones like "wk Fable".
+ */
 export function pillWindows(usage: ProviderUsage): UsageWindow[] {
-  const ranked = [...usage.windows].sort((a, b) => rank(a) - rank(b));
+  const summary = usage.windows.filter((win) => win.summary);
+  const pool = summary.length > 0 ? summary : usage.windows;
+  const ranked = [...pool].sort((a, b) => rank(a) - rank(b));
   return ranked.slice(0, 2);
 }
 
