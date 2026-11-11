@@ -106,16 +106,35 @@ export function providerKey(agentProvider: string): string {
   return agentProvider.split("/")[0]?.toLowerCase() ?? agentProvider;
 }
 
-/** Follows `extends` to the builtin whose usage the daemon tracks: `claude-lead` → `claude`. */
-export function baseProviderKey(state: UsageState, agentProvider: string): string {
-  let key = providerKey(agentProvider);
-  for (let hop = 0; hop < 8 && state.bases[key]; hop++) key = state.bases[key];
-  return key;
+/**
+ * Provider keys to try for an agent, most specific first: its own id, then each builtin it
+ * `extends`. Grok is configured as `grok` extending `acp` but reports usage as `grok`, while
+ * `claude-lead` extending `claude` only has usage under `claude`.
+ */
+export function providerKeyChain(state: UsageState, agentProvider: string): string[] {
+  const chain = [providerKey(agentProvider)];
+  for (let hop = 0; hop < 8; hop++) {
+    const next = state.bases[chain[chain.length - 1]!];
+    if (!next || chain.includes(next)) break;
+    chain.push(next);
+  }
+  return chain;
 }
 
+function entriesFor(state: UsageState, key: string): ProviderUsage[] {
+  return state.providers.filter((entry) => entry.providerId.toLowerCase() === key);
+}
+
+/** The first key in the chain the daemon reports usage for, else the last builtin it extends. */
+export function baseProviderKey(state: UsageState, agentProvider: string): string {
+  const chain = providerKeyChain(state, agentProvider);
+  return chain.find((key) => entriesFor(state, key).length > 0) ?? chain[chain.length - 1]!;
+}
+
+/** Several accounts can share a provider id (one signed out); prefer one with data. */
 export function findProviderUsage(state: UsageState, agentProvider: string): ProviderUsage | null {
-  const key = baseProviderKey(state, agentProvider);
-  return state.providers.find((entry) => entry.providerId.toLowerCase() === key) ?? null;
+  const entries = entriesFor(state, baseProviderKey(state, agentProvider));
+  return entries.find((entry) => entry.status === "available") ?? entries[0] ?? null;
 }
 
 export function usedPercent(win: UsageWindow): number | null {

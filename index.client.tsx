@@ -13,6 +13,7 @@ import {
   pillTone,
   pillWindows,
   baseProviderKey,
+  providerKeyChain,
   toneFor,
   usedPercent,
   type UsageStore,
@@ -21,7 +22,7 @@ import {
 
 const PILL_ID = "limits";
 
-/** Brand marks stay in brand colour; Codex uses the foreground like the composer chip does. */
+/** Brand marks stay in brand colour; Codex and Grok use the foreground like the composer chip does. */
 const BRAND_COLORS: Record<string, string> = { claude: "#D97757" };
 
 /**
@@ -39,7 +40,10 @@ function createLimitsIcon(store: UsageStore, agentProvider: () => string | null)
         : tone === "warning"
           ? theme.colors.statusWarning
           : theme.colors.statusSuccess;
-    const key = provider ? baseProviderKey(store.getState(), provider) : "";
+    const state = store.getState();
+    const key = provider
+      ? (providerKeyChain(state, provider).find((k) => PROVIDER_LOGOS[k]) ?? baseProviderKey(state, provider))
+      : "";
     const logo = key ? PROVIDER_LOGOS[key] : undefined;
     if (logo) {
       const brand = BRAND_COLORS[key] ?? theme.colors.foreground;
