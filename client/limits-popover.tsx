@@ -10,6 +10,7 @@ import {
   formatReset,
   pillWindows,
   toneFor,
+  usagePacing,
   usedPercent,
   type ProviderUsage,
   type UsageStore,
@@ -124,6 +125,16 @@ function WindowRow({ win, theme }: { win: UsageWindow; theme: PluginTheme }) {
   const tone = toneFor(win, pct);
   const color = toneColor(theme, tone);
   const reset = pct === null || pct > 0 ? formatReset(win.resetsAt) : null;
+  const pacing = usagePacing(win);
+  const pacingColor = pacing?.status === "ahead" ? theme.colors.statusWarning : theme.colors.foregroundMuted;
+  const pacingLabel =
+    pacing?.status === "ahead"
+      ? `${pacing.deltaPct}% ahead of pace`
+      : pacing?.status === "behind"
+        ? `${Math.abs(pacing.deltaPct)}% below pace`
+        : pacing
+          ? "On pace"
+          : null;
   return (
     <View style={{ gap: 3 }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
@@ -132,6 +143,20 @@ function WindowRow({ win, theme }: { win: UsageWindow; theme: PluginTheme }) {
         </Text>
         <View style={{ flex: 1, height: 6, borderRadius: 3, backgroundColor: theme.colors.surface2, overflow: "hidden" }}>
           <View style={{ width: `${pct ?? 0}%`, height: "100%", borderRadius: 3, backgroundColor: color }} />
+          {pacing ? (
+            <View
+              style={{
+                position: "absolute",
+                left: `${pacing.elapsedPct}%`,
+                top: 0,
+                width: 2,
+                height: "100%",
+                backgroundColor: theme.colors.foreground,
+                opacity: 0.8,
+                transform: [{ translateX: -1 }],
+              }}
+            />
+          ) : null}
         </View>
         <Text style={{ color, fontSize: 12, width: 40, textAlign: "right", fontVariant: ["tabular-nums"] }}>
           {pct === null ? "–" : `${pct}%`}
@@ -139,6 +164,11 @@ function WindowRow({ win, theme }: { win: UsageWindow; theme: PluginTheme }) {
       </View>
       {reset ? (
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, marginLeft: 66 }}>{reset}</Text>
+      ) : null}
+      {pacing && pacingLabel ? (
+        <Text style={{ color: pacingColor, fontSize: 11, marginLeft: 66 }}>
+          {pacingLabel} · {pacing.usedPct}% used / {pacing.elapsedPct}% elapsed
+        </Text>
       ) : null}
     </View>
   );

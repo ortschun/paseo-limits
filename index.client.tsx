@@ -13,6 +13,7 @@ import {
   pillTone,
   pillWindows,
   baseProviderKey,
+  providerKeyChain,
   toneFor,
   usedPercent,
   type UsageStore,
@@ -21,7 +22,7 @@ import {
 
 const PILL_ID = "limits";
 
-/** Brand marks stay in brand colour; Codex uses the foreground like the composer chip does. */
+/** Brand marks stay in brand colour; Codex and Grok use the foreground like the composer chip does. */
 const BRAND_COLORS: Record<string, string> = { claude: "#D97757" };
 
 /**
@@ -39,7 +40,10 @@ function createLimitsIcon(store: UsageStore, agentProvider: () => string | null)
         : tone === "warning"
           ? theme.colors.statusWarning
           : theme.colors.statusSuccess;
-    const key = provider ? baseProviderKey(store.getState(), provider) : "";
+    const state = store.getState();
+    const key = provider
+      ? (providerKeyChain(state, provider).find((k) => PROVIDER_LOGOS[k]) ?? baseProviderKey(state, provider))
+      : "";
     const logo = key ? PROVIDER_LOGOS[key] : undefined;
     if (logo) {
       const brand = BRAND_COLORS[key] ?? theme.colors.foreground;
@@ -103,6 +107,7 @@ export default function contribute(client: PluginClientContext) {
   type Tracked = { registration: PluginButtonRegistration; provider: string; workspaceId: string };
   const pills = new Map<string, Tracked>();
   const providers = new Map<string, string>();
+  const lifetime = new AbortController();
   let stopped = false;
 
   const describe = (agentId: string) => {
@@ -145,6 +150,10 @@ export default function contribute(client: PluginClientContext) {
     providers.delete(agentId);
   };
 
+  const unregisterAll = () => {
+    for (const agentId of pills.keys()) unregister(agentId);
+  };
+
   // Re-label every pill when usage changes. The icon re-reads the store on its next render.
   const unsubscribeStore = store.subscribe(() => {
     for (const [agentId, tracked] of pills) {
@@ -152,15 +161,24 @@ export default function contribute(client: PluginClientContext) {
     }
   });
 
-  const unsubscribeAgents = client.paseo.agents.subscribe((update) => {
-    if (update.kind === "remove") unregister(update.agentId);
-    else register(update.agent);
-  });
-
+  // The owned list subscription supplies existing chats, new chats, and a fresh snapshot after
+  // reconnecting. A one-off list leaves chats created later without a composer pill.
   void client.paseo.agents
-    .list({ filter: { includeArchived: false } })
-    .then(({ entries }) => {
-      for (const { agent } of entries) register(agent);
+    .list({ filter: { includeArchived: false }, subscribe: {}, signal: lifetime.signal })
+    .then(({ subscription }) => {
+      subscription.subscribe({
+        snapshot: ({ entries }) => {
+          if (stopped) return;
+          unregisterAll();
+          for (const { agent } of entries) register(agent);
+        },
+        update: (message) => {
+          if (stopped || message.type !== "agent_update") return;
+          const update = message.payload;
+          if (update.kind === "remove") unregister(update.agentId);
+          else register(update.agent);
+        },
+      });
     })
     .catch((error: unknown) => {
       if (!stopped) console.error("[paseo-limits] agent list failed", error);
@@ -170,11 +188,10 @@ export default function contribute(client: PluginClientContext) {
 
   return () => {
     stopped = true;
+    lifetime.abort();
     unsubscribeStore();
-    unsubscribeAgents();
     store.stop();
-    for (const tracked of pills.values()) tracked.registration.remove();
-    pills.clear();
+    unregisterAll();
     providers.clear();
   };
 }

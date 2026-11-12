@@ -106,16 +106,35 @@ export function providerKey(agentProvider: string): string {
   return agentProvider.split("/")[0]?.toLowerCase() ?? agentProvider;
 }
 
-/** Follows `extends` to the builtin whose usage the daemon tracks: `claude-lead` → `claude`. */
-export function baseProviderKey(state: UsageState, agentProvider: string): string {
-  let key = providerKey(agentProvider);
-  for (let hop = 0; hop < 8 && state.bases[key]; hop++) key = state.bases[key];
-  return key;
+/**
+ * Provider keys to try for an agent, most specific first: its own id, then each builtin it
+ * `extends`. Grok is configured as `grok` extending `acp` but reports usage as `grok`, while
+ * `claude-lead` extending `claude` only has usage under `claude`.
+ */
+export function providerKeyChain(state: UsageState, agentProvider: string): string[] {
+  const chain = [providerKey(agentProvider)];
+  for (let hop = 0; hop < 8; hop++) {
+    const next = state.bases[chain[chain.length - 1]!];
+    if (!next || chain.includes(next)) break;
+    chain.push(next);
+  }
+  return chain;
 }
 
+function entriesFor(state: UsageState, key: string): ProviderUsage[] {
+  return state.providers.filter((entry) => entry.providerId.toLowerCase() === key);
+}
+
+/** The first key in the chain the daemon reports usage for, else the last builtin it extends. */
+export function baseProviderKey(state: UsageState, agentProvider: string): string {
+  const chain = providerKeyChain(state, agentProvider);
+  return chain.find((key) => entriesFor(state, key).length > 0) ?? chain[chain.length - 1]!;
+}
+
+/** Several accounts can share a provider id (one signed out); prefer one with data. */
 export function findProviderUsage(state: UsageState, agentProvider: string): ProviderUsage | null {
-  const key = baseProviderKey(state, agentProvider);
-  return state.providers.find((entry) => entry.providerId.toLowerCase() === key) ?? null;
+  const entries = entriesFor(state, baseProviderKey(state, agentProvider));
+  return entries.find((entry) => entry.status === "available") ?? entries[0] ?? null;
 }
 
 export function usedPercent(win: UsageWindow): number | null {
@@ -143,6 +162,8 @@ export function worstTone(tones: UsageTone[]): UsageTone {
 }
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * "5h" or "wk". Claude names its windows explicitly. Codex calls its primary window "Session"
@@ -166,6 +187,34 @@ export function shortWindowLabel(win: UsageWindow, now = Date.now()): string {
 export function displayWindowLabel(win: UsageWindow): string {
   if (!/session|primary|secondary/i.test(`${win.id} ${win.label}`)) return win.label;
   return shortWindowLabel(win) === "wk" ? "Weekly" : "5-hour";
+}
+
+export type UsagePacing = {
+  elapsedPct: number;
+  usedPct: number;
+  deltaPct: number;
+  status: "ahead" | "on-pace" | "behind";
+};
+
+/**
+ * Compare actual consumption with the portion of a known 5-hour or weekly window that has
+ * elapsed. Paseo reports the reset instant but not the start, so windows without a reliable
+ * duration intentionally return null instead of presenting a made-up pace.
+ */
+export function usagePacing(win: UsageWindow, now = Date.now()): UsagePacing | null {
+  const usedPct = usedPercent(win);
+  const resetAt = win.resetsAt ? new Date(win.resetsAt).getTime() : Number.NaN;
+  const duration = shortWindowLabel(win, now) === "5h" ? FIVE_HOURS_MS : shortWindowLabel(win, now) === "wk" ? WEEK_MS : null;
+  if (usedPct === null || duration === null || Number.isNaN(resetAt)) return null;
+
+  const elapsedPct = Math.round(Math.max(0, Math.min(100, ((now - (resetAt - duration)) / duration) * 100)));
+  const deltaPct = usedPct - elapsedPct;
+  return {
+    elapsedPct,
+    usedPct,
+    deltaPct,
+    status: deltaPct > 5 ? "ahead" : deltaPct < -5 ? "behind" : "on-pace",
+  };
 }
 
 /** The two windows the pill shows: the session win first, then the weekly one. */
